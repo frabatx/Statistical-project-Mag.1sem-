@@ -1,0 +1,236 @@
+---
+title: "Regression Analysis of *cigarettes* Dataset"
+author: "Nicolo' Merzi, Francesco Battista, Davide Cappellaro, Leonardo Pajer"
+subtitle: Statistical Learning Project - First Module
+output:
+  html_notebook:
+    number_sections: yes
+  pdf_document: default
+---
+
+
+The dataset *cigarettes* contains data about the smoking behavior and other variables for a random sample of single adults from United States of America. 
+
+The variables are:
+
+* *numcig*: average number of cigarettes smoked per day 
+* *edu*: years of education in schools
+* *price*: price of a pack of cigarettes (in dollar cents)
+* *ethnic*: ethnicity (black/white)
+* *age*: age in years
+* *income*: annual income (dollars)
+* *restrRestr*: if the person lives in a state with restaurant smoking restrictions (yes/no)
+
+First we load the dataset into R
+
+```{r}
+cigarettes <- read.csv("cigarettes.csv")
+```
+
+Every modeling effort should begin with an inspection of the data.
+
+```{r}
+summary(cigarettes)
+```
+
+From the summary we can already extrapolate some usefull information: 
+
+* most of our datapoints consist of non smoker (497 non smokers to 310 smokers)
+* the majority are white (709 whites to 98 blacks)
+* most of these people live in places where there are no smoking resturant restriction (608 no to 199 yes)
+
+Before modeling, there are two important things to check: 
+
+1. that each individual variable has a reasonable distribution
+2. that joint relationships among the variables are appropriate for modeling
+
+```{r}
+pairs(cigarettes)
+```
+
+We also investigate the correlation structure further and check each individual distribution using:
+
+```{r}
+library(psych)
+pairs.panels(cigarettes)
+```
+
+The correlations between the variables are all pretty low (no correlations exceeding r > 0.8), meaning that none of the variables apper to be nearly identical. We can assume to be acceptable to proceed with modelling the relationships among these variables.
+
+We want to use the linear regression model, with *numcig* as the dependent variable, to estimate a demand function for daily cigarette consumption, but before this we have to make adjustment to some variables:
+
+Transforming *age* to avoid non-linearity with a quadratic transformation.
+
+```{r}
+cigarettes$Tage <- (cigarettes$age^2)
+```
+
+Transforming *edu* to avoid non-linearity with a quadratic transformation.
+
+```{r}
+cigarettes$Tedu <- (cigarettes$edu^2)
+```
+
+Transforming *income* with a logaritmic transformation.
+
+```{r}
+cigarettes$Tincome <- log(cigarettes$income)
+```
+
+This is the initial linear model using all the variables we have with no transformation.
+
+```{r}
+model <- lm(numcig ~ income + edu + restrRestr + ethnic + price + age, data = cigarettes)
+summary(model)
+```
+
+The following model adds the quadratic transformation of age (*Tage*) and edu (*Tedu*) and substitute income with the log transformation (*Tincome*).
+
+```{r}
+modelT <- lm(numcig ~ Tincome + Tedu + edu  + restrRestr + ethnic + price + Tage + age, data = cigarettes)
+summary(modelT)
+```
+
+It can be seen that some variables are not significant, so we create new models omitting the non-significant variables.
+First we remove *price* from the initial model.
+
+```{r}
+model2 <- lm(numcig ~ Tincome + Tedu + edu + restrRestr + ethnic + Tage + age, data = cigarettes)
+summary(model2)
+```
+
+R-squared has improved a bit but we still have a non significant variable so we also remove *ethnic* from the model
+
+```{r}
+model3 <- lm(numcig ~ Tincome + Tedu + edu + restrRestr + Tage + age, data = cigarettes)
+summary(model3)
+```
+
+R-Squared has improved once again, now we need to verify whether there are violations of the model assumptions. First we plot our model using:
+
+```{r}
+par(mfrow = c(2,2))
+plot(model3)
+```
+
+* Residuals vs Fitted plot shows that the mean of the residuals linearly decreases (should be flat around 0).
+* Normal Q-Q plot shows a slight deviation from a normal distribution of the residuals but since we have close to a thousand observations we can say that the mean of the residuals of our observations is close to the actual mean of the population (Central Limit Theorem). 
+* Scale location plot shows heterosedasticity (the mean of the squared standard residuals plotted against the fitted values shows a clear pattern) so violations of the homoscedascticity assumption are detected.
+
+We can already see that there is heteroscedasticity in this model from the Scale-Location plot but to be sure we perform a formal test: the BP-test.
+
+```{r}
+library(lmtest)
+bptest(model3)
+```
+
+A p-value of 2.066e-05 is very low so we can reject the null hypoteshis of homoscedasticity, meaning that heteroscedasticity is actually present.
+
+The possible remedies to fix Heteroscedasticity:
+
+* Log transformation of the dependant variable
+* FWLS
+
+**Log Transformation:**
+
+Take the log of the dependent variable (add + 1 to make it strictly positive)
+
+```{r}
+modelLog <- lm(log(numcig + 1) ~ Tedu + edu + Tincome + restrRestr + Tage + age, data = cigarettes)
+summary(modelLog)
+```
+
+The median of the residuals is close to 0 meaning that the residuals more or less symetrically distributed. Now we check the Scale-Location plot to see if heteroscedasticity is fixed:
+
+```{r}
+plot(modelLog, which=3)
+```
+
+There is a very clear pattern which means that heteroscedasticity is still present.
+
+**FWLS approach:**
+
+First we estimate the auxilary variance function.
+
+```{r}
+logRes2 <- log(model3$residuals^2)
+varMod <- lm(logRes2 ~ Tedu + edu + Tincome + restrRestr + Tage + age , data = cigarettes)
+```
+
+Use the fitted values to obtain W and next estimate the model with WLS using w as weights.
+
+```{r}
+w <- exp(varMod$fit)
+modFWLS <- lm(numcig ~ Tedu + edu + Tincome + restrRestr + Tage + age, weights = 1/w, data = cigarettes)
+summary(modFWLS)
+```
+
+The median of the Weighted Residuals is very close to 0 (-0.8139) which means that the residuals are aproximately symetrically distributed.
+
+Heteroscedasticity seems to have been fixed as can be seen in the Scale-Location plot. We can also see that the mean of the residuals vs fitted values is flatter, centered to 0 and with no clear pattern.
+
+```{r}
+plot(modFWLS, which=c(1,3))
+```
+
+Now that we fixed heteroscedasticity and that our model have all significant variable we can use it to make inference:
+
+To see if *income* has a significant effect or not we need to compare our model with and without the independant variable income:
+
+First we need to create a model without the variable *Tincome*
+
+```{r}
+modNoInc <- lm(numcig ~ Tedu + edu + restrRestr + Tage + age, weights = 1/w, data = cigarettes)
+```
+
+We then compare them using anova() function
+
+```{r}
+anova(modFWLS, modNoInc)
+```
+
+p-value of 0.001 is low enough to reject the null hypothesis H0 (H0: the two models are the same), meaning that there is evidence here that *income* has a significant effect.
+
+To see if smoking resturant restriction are effective in reducing the consumption of cigarettes we look at the estimates of our model.
+
+```{r}
+summary(modFWLS)
+```
+
+We can see that the estimate of *restRestryes* (group where there are smoking resturant restriction) is -3.442 which means that in average people who live in these states smoke close to 3.5 cigarettes less than people who live in state where there are no smoking resturant restrictions. From this dataset  we can conclude that smoking resturant restrictions are effective in reducing daily cigarettes consumption.
+
+The effect of an increase of the tax on cigarettes can be seen  by looking at the estimate of our model. First we need to include *price* in our model:
+
+```{r}
+modPrice <- lm(numcig ~ Tedu + edu + restrRestr + Tage + age + price, weights = 1/w, data = cigarettes)
+summary(modPrice)
+```
+
+The estimate of *price* in our model is 7.484e-02. This means that statistically for every cent, the daily consumption of cigarettes grows by 0.07848 (1 cigarette for every 13.4 cents). It is important to remeber that *price* is not significant here in explaining the consumption of cigarettes so this estimate is not accurate.
+
+
+To calculate the prediction of the future average consumption of cigarettes for US people who:
+
+* are 30 years old
+* have studied for 13 years
+* their favorite cigarettes cost 63 cents per pack
+* are black
+* have an income of 20000$
+* live in a state subject to resturant smoking restrictions
+
+We use the predict function passing our initial *model*.
+
+```{r}
+predict(model, data.frame(edu=13, price=63, ethnic="black", age=30, income=20000, restrRestr="yes"), interval = "confidence", level = 0.95)
+```
+
+The predicted value is 6.93385 with a 95% precision level between 3.814545 and 10.05316.
+
+### Final model {-} 
+
+```{r}
+modFinal <- modFWLS
+summary(modFinal)
+```
+
+
